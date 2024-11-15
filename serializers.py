@@ -106,19 +106,26 @@ class BaseSerializer(Field):
     """
 
     def __init__(self, instance=None, data=empty, **kwargs):
+        # 初始化实例变量instance，用于存储序列化对象的实例
         self.instance = instance
+        # 如果data不是empty（默认值），则将其赋值给initial_data，用于存储传入的数据
         if data is not empty:
             self.initial_data = data
+        # 设置partial属性，如果kwargs中有'partial'键，则为True，否则为False
         self.partial = kwargs.pop('partial', False)
+        # 设置_context属性，用于存储上下文信息，从kwargs中弹出'context'键的值，如果没有则为空字典
         self._context = kwargs.pop('context', {})
+        # 弹出kwargs中的'many'键，如果有则忽略其值
         kwargs.pop('many', None)
+        # 调用父类的__init__方法，完成其他初始化工作
         super().__init__(**kwargs)
 
     def __new__(cls, *args, **kwargs):
-        # We override this method in order to automatically create
-        # `ListSerializer` classes instead when `many=True` is set.
+        # 重写__new__方法，以便在'many=True'时自动创建ListSerializer类的实例
+        # 如果kwargs中有'many'键且其值为True，则调用many_init方法创建实例
         if kwargs.pop('many', False):
             return cls.many_init(*args, **kwargs)
+        # 否则，调用父类的__new__方法创建实例
         return super().__new__(cls, *args, **kwargs)
 
     # Allow type checkers to make serializers generic.
@@ -158,9 +165,30 @@ class BaseSerializer(Field):
         return list_serializer_class(*args, **list_kwargs)
 
     def to_internal_value(self, data):
+        """
+        将外部数据转换为内部数据
+        此方法用于将接收到的数据（通常是来自请求的JSON或其他格式的数据）转换为Python对象，
+        这些对象可以被模型直接使用。这个方法需要在子类中实现，因为它是一个抽象方法。
+        """
+        # 一个简单的列子
+        # return {
+        #     'username': data['username'],
+        #     'email': data['email'],
+        #     'age': int(data['age']),  # 进行数据类型转换
+        # }
         raise NotImplementedError('`to_internal_value()` must be implemented.')
 
     def to_representation(self, instance):
+        """
+        将内部数据转换为外部数据
+        此方法用于将模型实例转换为可以发送给客户端的原始数据，
+        例如，将Python对象转换为JSON。这个方法也需要在子类中实现，因为它是一个抽象方法。
+        """
+        # 一个简单的列子
+        # return {
+        #     'username': instance.username,
+        #     'email': instance.email,
+        # }
         raise NotImplementedError('`to_representation()` must be implemented.')
 
     def update(self, instance, validated_data):
@@ -210,6 +238,7 @@ class BaseSerializer(Field):
         return self.instance
 
     def is_valid(self, raise_exception=False):
+        # initial_data 就是传入的data
         assert hasattr(self, 'initial_data'), (
             'Cannot call `.is_valid()` as no `data=` keyword argument was '
             'passed when instantiating the serializer instance.'
@@ -231,7 +260,9 @@ class BaseSerializer(Field):
 
     @property
     def data(self):
+        # 检查是否存在'initial_data'属性且不存在'_validated_data'属性
         if hasattr(self, 'initial_data') and not hasattr(self, '_validated_data'):
+            # 如果是这种情况，抛出AssertionError，提示用户需要先调用.is_valid()
             msg = (
                 'When a serializer is passed a `data` keyword argument you '
                 'must call `.is_valid()` before attempting to access the '
@@ -241,13 +272,20 @@ class BaseSerializer(Field):
             )
             raise AssertionError(msg)
 
+        # 如果不存在'_data'属性
         if not hasattr(self, '_data'):
+            # 如果存在'instance'属性且不存在'_errors'属性
             if self.instance is not None and not getattr(self, '_errors', None):
+                # 使用to_representation方法将instance转换为可序列化的数据，并赋值给'_data'
                 self._data = self.to_representation(self.instance)
+            # 如果存在'_validated_data'属性且不存在'_errors'属性
             elif hasattr(self, '_validated_data') and not getattr(self, '_errors', None):
+                # 使用to_representation方法将validated_data转换为可序列化的数据，并赋值给'_data'
                 self._data = self.to_representation(self.validated_data)
             else:
+                # 否则，调用get_initial方法获取初始数据，并赋值给'_data'
                 self._data = self.get_initial()
+        # 返回'_data'属性的值
         return self._data
 
     @property
@@ -270,40 +308,49 @@ class BaseSerializer(Field):
 
 class SerializerMetaclass(type):
     """
-    This metaclass sets a dictionary named `_declared_fields` on the class.
+    这个元类在类上设置了一个名为`_declared_fields`的字典。
 
-    Any instances of `Field` included as attributes on either the class
-    or on any of its superclasses will be include in the
-    `_declared_fields` dictionary.
+    类或其任何超类中作为属性包含的`Field`实例都将包含在`_declared_fields`字典中。
     """
 
     @classmethod
     def _get_declared_fields(cls, bases, attrs):
+        """
+        :param bases: 是父类
+        :param attrs: 一个字典，包含类中定义的所有属性
+        :return:
+        """
+
+        # 从属性中提取字段，并按创建计数器排序
         fields = [(field_name, attrs.pop(field_name))
                   for field_name, obj in list(attrs.items())
                   if isinstance(obj, Field)]
+        # 每一个元素都是Field实例
         fields.sort(key=lambda x: x[1]._creation_counter)
 
-        # Ensures a base class field doesn't override cls attrs, and maintains
-        # field precedence when inheriting multiple parents. e.g. if there is a
-        # class C(A, B), and A and B both define 'field', use 'field' from A.
+        # 确保基类的字段不会覆盖cls属性，并在继承多个父类时保持字段优先级。
         known = set(attrs)
 
+        # 定义一个访问函数，用于添加已知字段到集合中
         def visit(name):
             known.add(name)
             return name
 
+        # 从基类中收集字段，确保不重复
         base_fields = [
             (visit(name), f)
             for base in bases if hasattr(base, '_declared_fields')
             for name, f in base._declared_fields.items() if name not in known
         ]
 
+        # 返回一个有序字典，包含基类字段和当前类的字段
         return OrderedDict(base_fields + fields)
 
     def __new__(cls, name, bases, attrs):
+        # 在创建新类时，设置_declared_fields属性
         attrs['_declared_fields'] = cls._get_declared_fields(bases, attrs)
         return super().__new__(cls, name, bases, attrs)
+
 
 
 def as_serializer_error(exc):
@@ -390,7 +437,7 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
                 (field_name, field.get_value(self.initial_data))
                 for field_name, field in self.fields.items()
                 if (field.get_value(self.initial_data) is not empty) and
-                not field.read_only
+                   not field.read_only
             ])
 
         return OrderedDict([
@@ -455,6 +502,9 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
 
     def to_internal_value(self, data):
         """
+        data就是initial_data
+        将外部数据转换为内部数据
+        此方法用于将接收到的数据（通常是来自请求的JSON或其他格式的数据）转换为Python对象.
         Dict of native values <- Dict of primitive datatypes.
         """
         if not isinstance(data, Mapping):
@@ -921,48 +971,55 @@ class ModelSerializer(Serializer):
         The default implementation also does not handle nested relationships.
         If you want to support writable nested relationships you'll need
         to write an explicit `.create()` method.
+
         """
+        # 检查是否有嵌套写入的情况，如果有则抛出异常
         raise_errors_on_nested_writes('create', self, validated_data)
 
+        # 获取模型类
         ModelClass = self.Meta.model
 
-        # Remove many-to-many relationships from validated_data.
-        # They are not valid arguments to the default `.create()` method,
-        # as they require that the instance has already been saved.
-        info = model_meta.get_field_info(ModelClass)
+        # 准备一个字典来存储多对多关系的数据
         many_to_many = {}
+
+        # 获取模型字段信息，并移除validated_data中的多对多关系字段
+        # 因为这些字段不能直接用于默认的.create()方法
+        info = model_meta.get_field_info(ModelClass)
         for field_name, relation_info in info.relations.items():
             if relation_info.to_many and (field_name in validated_data):
                 many_to_many[field_name] = validated_data.pop(field_name)
 
         try:
+            # 尝试使用剩余的validated_data创建模型实例
             instance = ModelClass._default_manager.create(**validated_data)
         except TypeError:
+            # 如果出现TypeError，捕获异常并抛出一个包含更多信息的TypeError
             tb = traceback.format_exc()
             msg = (
-                'Got a `TypeError` when calling `%s.%s.create()`. '
-                'This may be because you have a writable field on the '
-                'serializer class that is not a valid argument to '
-                '`%s.%s.create()`. You may need to make the field '
-                'read-only, or override the %s.create() method to handle '
-                'this correctly.\nOriginal exception was:\n %s' %
-                (
-                    ModelClass.__name__,
-                    ModelClass._default_manager.name,
-                    ModelClass.__name__,
-                    ModelClass._default_manager.name,
-                    self.__class__.__name__,
-                    tb
-                )
+                    'Got a `TypeError` when calling `%s.%s.create()`. '
+                    'This may be because you have a writable field on the '
+                    'serializer class that is not a valid argument to '
+                    '`%s.%s.create()`. You may need to make the field '
+                    'read-only, or override the %s.create() method to handle '
+                    'this correctly.\nOriginal exception was:\n %s' %
+                    (
+                        ModelClass.__name__,
+                        ModelClass._default_manager.name,
+                        ModelClass.__name__,
+                        ModelClass._default_manager.name,
+                        self.__class__.__name__,
+                        tb
+                    )
             )
             raise TypeError(msg)
 
-        # Save many-to-many relationships after the instance is created.
+        # 在实例创建后，设置多对多关系字段
         if many_to_many:
             for field_name, value in many_to_many.items():
                 field = getattr(instance, field_name)
                 field.set(value)
 
+        # 返回创建的实例
         return instance
 
     def update(self, instance, validated_data):
@@ -1167,10 +1224,10 @@ class ModelSerializer(Serializer):
         `Meta.fields` option is not specified.
         """
         return (
-            [model_info.pk.name] +
-            list(declared_fields) +
-            list(model_info.fields) +
-            list(model_info.forward_relations)
+                [model_info.pk.name] +
+                list(declared_fields) +
+                list(model_info.fields) +
+                list(model_info.forward_relations)
         )
 
     # Methods for constructing serializer fields...
@@ -1267,7 +1324,8 @@ class ModelSerializer(Serializer):
         field_kwargs = get_relation_kwargs(field_name, relation_info)
 
         to_field = field_kwargs.pop('to_field', None)
-        if to_field and not relation_info.reverse and not relation_info.related_model._meta.get_field(to_field).primary_key:
+        if to_field and not relation_info.reverse and not relation_info.related_model._meta.get_field(
+                to_field).primary_key:
             field_kwargs['slug_field'] = to_field
             field_class = self.serializer_related_to_field
 
@@ -1281,6 +1339,7 @@ class ModelSerializer(Serializer):
         """
         Create nested fields for forward and reverse relationships.
         """
+
         class NestedSerializer(ModelSerializer):
             class Meta:
                 model = relation_info.related_model
@@ -1367,9 +1426,9 @@ class ModelSerializer(Serializer):
             # Guard against the possible misspelling `readonly_fields` (used
             # by the Django admin and others).
             assert not hasattr(self.Meta, 'readonly_fields'), (
-                'Serializer `%s.%s` has field `readonly_fields`; '
-                'the correct spelling for the option is `read_only_fields`.' %
-                (self.__class__.__module__, self.__class__.__name__)
+                    'Serializer `%s.%s` has field `readonly_fields`; '
+                    'the correct spelling for the option is `read_only_fields`.' %
+                    (self.__class__.__module__, self.__class__.__name__)
             )
 
         return extra_kwargs
@@ -1496,8 +1555,8 @@ class ModelSerializer(Serializer):
 
         # Otherwise use the default set of validators.
         return (
-            self.get_unique_together_validators() +
-            self.get_unique_for_date_validators()
+                self.get_unique_together_validators() +
+                self.get_unique_for_date_validators()
         )
 
     def get_unique_together_validators(self):
@@ -1505,8 +1564,8 @@ class ModelSerializer(Serializer):
         Determine a default set of validators for any unique_together constraints.
         """
         model_class_inheritance_tree = (
-            [self.Meta.model] +
-            list(self.Meta.model._meta.parents)
+                [self.Meta.model] +
+                list(self.Meta.model._meta.parents)
         )
 
         # The field names we're passing though here only include fields
@@ -1622,16 +1681,17 @@ class HyperlinkedModelSerializer(ModelSerializer):
         `Meta.fields` option is not specified.
         """
         return (
-            [self.url_field_name] +
-            list(declared_fields) +
-            list(model_info.fields) +
-            list(model_info.forward_relations)
+                [self.url_field_name] +
+                list(declared_fields) +
+                list(model_info.fields) +
+                list(model_info.forward_relations)
         )
 
     def build_nested_field(self, field_name, relation_info, nested_depth):
         """
         Create nested fields for forward and reverse relationships.
         """
+
         class NestedSerializer(HyperlinkedModelSerializer):
             class Meta:
                 model = relation_info.related_model

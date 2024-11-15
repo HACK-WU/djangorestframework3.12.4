@@ -47,6 +47,9 @@ class GenericAPIView(views.APIView):
 
     def get_queryset(self):
         """
+        get_queryset()需要返回的是一个可迭代的对象，如果不是默认的是self.queryset.all().
+        推荐使用get_queryset()去获取queryset，而不是直接使用self.queryset.
+
         Get the list of items for this view.
         This must be an iterable, and may be a queryset.
         Defaults to using `self.queryset`.
@@ -61,9 +64,9 @@ class GenericAPIView(views.APIView):
         (Eg. return a list of items that is specific to the user)
         """
         assert self.queryset is not None, (
-            "'%s' should either include a `queryset` attribute, "
-            "or override the `get_queryset()` method."
-            % self.__class__.__name__
+                "'%s' should either include a `queryset` attribute, "
+                "or override the `get_queryset()` method."
+                % self.__class__.__name__
         )
 
         queryset = self.queryset
@@ -74,39 +77,54 @@ class GenericAPIView(views.APIView):
 
     def get_object(self):
         """
-        Returns the object the view is displaying.
-
-        You may want to override this if you need to provide non-standard
-        queryset lookups.  Eg if objects are referenced using multiple
-        keyword arguments in the url conf.
+        获取到一个具体的model对象，底层代码使用的get()方法，如果获取不到会抛出异常。
+        主要流程：
+        1.先使用filter_queryset()进行过滤
+        2.构建查询条件
+        3.使用get_object_or_404()获取对象，底层使用get()方法获取对象，如果获取不到会抛出异常。
+        4.权限校验
         """
+
+        # 使用自定义过滤器获取查询集
         queryset = self.filter_queryset(self.get_queryset())
 
-        # Perform the lookup filtering.
+        # 执行查找过滤。
+        # lookup_url_kwarg是从URL中获取的关键字参数，如果没有指定，则使用lookup_field
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
 
+        # 断言lookup_url_kwarg必须在kwargs中，否则抛出异常
         assert lookup_url_kwarg in self.kwargs, (
-            'Expected view %s to be called with a URL keyword argument '
-            'named "%s". Fix your URL conf, or set the `.lookup_field` '
-            'attribute on the view correctly.' %
-            (self.__class__.__name__, lookup_url_kwarg)
+                'Expected view %s to be called with a URL keyword argument '
+                'named "%s". Fix your URL conf, or set the `.lookup_field` '
+                'attribute on the view correctly.' %
+                (self.__class__.__name__, lookup_url_kwarg)
         )
 
+        # 根据lookup_field和从URL中获取的关键字参数构建过滤条件
         filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+
+        # 使用过滤条件从查询集中获取对象，如果不存在则返回404错误
         obj = get_object_or_404(queryset, **filter_kwargs)
 
-        # May raise a permission denied
+        # 检查对象权限，可能会抛出权限被拒绝的异常
         self.check_object_permissions(self.request, obj)
 
+        # 返回找到的对象
         return obj
 
     def get_serializer(self, *args, **kwargs):
         """
-        Return the serializer instance that should be used for validating and
-        deserializing input, and for serializing output.
+        返回应用于验证和反序列化输入以及序列化输出的序列化器实例。
+
+        此方法首先获取应使用的序列化器类，然后确保'context'关键字参数被设置，
+        如果未提供，则使用当前上下文，当前上下文包括request，view和format。
+        最后，它实例化序列化器类并返回该实例。
         """
+        # 获取应使用的序列化器类
         serializer_class = self.get_serializer_class()
+        # 确保'context'关键字参数被设置，如果未提供，则使用当前上下文
         kwargs.setdefault('context', self.get_serializer_context())
+        # 实例化序列化器类并返回该实例
         return serializer_class(*args, **kwargs)
 
     def get_serializer_class(self):
@@ -120,9 +138,9 @@ class GenericAPIView(views.APIView):
         (Eg. admins get full serialization, others get basic serialization)
         """
         assert self.serializer_class is not None, (
-            "'%s' should either include a `serializer_class` attribute, "
-            "or override the `get_serializer_class()` method."
-            % self.__class__.__name__
+                "'%s' should either include a `serializer_class` attribute, "
+                "or override the `get_serializer_class()` method."
+                % self.__class__.__name__
         )
 
         return self.serializer_class
@@ -186,6 +204,7 @@ class CreateAPIView(mixins.CreateModelMixin,
     """
     Concrete view for creating a model instance.
     """
+
     def post(self, request, *args, **kwargs):
         return self.create(request, *args, **kwargs)
 
@@ -195,6 +214,7 @@ class ListAPIView(mixins.ListModelMixin,
     """
     Concrete view for listing a queryset.
     """
+
     def get(self, request, *args, **kwargs):
         return self.list(request, *args, **kwargs)
 
@@ -204,6 +224,7 @@ class RetrieveAPIView(mixins.RetrieveModelMixin,
     """
     Concrete view for retrieving a model instance.
     """
+
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
 
@@ -213,6 +234,7 @@ class DestroyAPIView(mixins.DestroyModelMixin,
     """
     Concrete view for deleting a model instance.
     """
+
     def delete(self, request, *args, **kwargs):
         return self.destroy(request, *args, **kwargs)
 
@@ -222,6 +244,7 @@ class UpdateAPIView(mixins.UpdateModelMixin,
     """
     Concrete view for updating a model instance.
     """
+
     def put(self, request, *args, **kwargs):
         return self.update(request, *args, **kwargs)
 
@@ -235,6 +258,7 @@ class ListCreateAPIView(mixins.ListModelMixin,
     """
     Concrete view for listing a queryset or creating a model instance.
     """
+
     def get(self, request, *args, **kwargs):
         return self.list(request, *args, **kwargs)
 
@@ -248,6 +272,7 @@ class RetrieveUpdateAPIView(mixins.RetrieveModelMixin,
     """
     Concrete view for retrieving, updating a model instance.
     """
+
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
 
@@ -264,6 +289,7 @@ class RetrieveDestroyAPIView(mixins.RetrieveModelMixin,
     """
     Concrete view for retrieving or deleting a model instance.
     """
+
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
 
@@ -278,6 +304,7 @@ class RetrieveUpdateDestroyAPIView(mixins.RetrieveModelMixin,
     """
     Concrete view for retrieving, updating or deleting a model instance.
     """
+
     def get(self, request, *args, **kwargs):
         return self.retrieve(request, *args, **kwargs)
 

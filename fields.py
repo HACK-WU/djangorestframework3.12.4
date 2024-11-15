@@ -104,7 +104,8 @@ def get_attribute(instance, attrs):
                 # If we raised an Attribute or KeyError here it'd get treated
                 # as an omitted field in `Field.get_attribute()`. Instead we
                 # raise a ValueError to ensure the exception is not masked.
-                raise ValueError('Exception raised in callable attribute "{}"; original exception was: {}'.format(attr, exc))
+                raise ValueError(
+                    'Exception raised in callable attribute "{}"; original exception was: {}'.format(attr, exc))
 
     return instance
 
@@ -181,6 +182,7 @@ def iter_options(grouped_choices, cutoff=None, cutoff_text=None):
     """
     Helper function for options and option groups in templates.
     """
+
     class StartOptionGroup:
         start_option_group = True
         end_option_group = False
@@ -376,10 +378,10 @@ class Field:
         # 'source' argument has been used. For example:
         # my_field = serializer.CharField(source='my_field')
         assert self.source != field_name, (
-            "It is redundant to specify `source='%s'` on field '%s' in "
-            "serializer '%s', because it is the same as the field name. "
-            "Remove the `source` keyword argument." %
-            (field_name, self.__class__.__name__, parent.__class__.__name__)
+                "It is redundant to specify `source='%s'` on field '%s' in "
+                "serializer '%s', because it is the same as the field name. "
+                "Remove the `source` keyword argument." %
+                (field_name, self.__class__.__name__, parent.__class__.__name__)
         )
 
         self.field_name = field_name
@@ -554,19 +556,22 @@ class Field:
 
     def run_validation(self, data=empty):
         """
-        Validate a simple representation and return the internal value.
+        验证一个简单表示并返回内部值。
 
-        The provided data may be `empty` if no representation was included
-        in the input.
+        提供的数据可能是`empty`，如果没有表示被包含在输入中。
 
-        May raise `SkipField` if the field should not be included in the
-        validated data.
+        如果字段不应该包含在验证数据中，可能会引发`SkipField`。
         """
+        # 调用validate_empty_values方法来检查数据是否为空，并获取处理后的数据和是否为空的标志
         (is_empty_value, data) = self.validate_empty_values(data)
+        # 如果数据是空的，则直接返回数据，不进行后续处理
         if is_empty_value:
             return data
+        # 将外部数据转换为内部值
         value = self.to_internal_value(data)
+        # 运行所有的验证器来确保数据的有效性
         self.run_validators(value)
+        # 返回验证后的内部值
         return value
 
     def run_validators(self, value):
@@ -843,7 +848,8 @@ class SlugField(CharField):
         super().__init__(**kwargs)
         self.allow_unicode = allow_unicode
         if self.allow_unicode:
-            validator = RegexValidator(re.compile(r'^[-\w]+\Z', re.UNICODE), message=self.error_messages['invalid_unicode'])
+            validator = RegexValidator(re.compile(r'^[-\w]+\Z', re.UNICODE),
+                                       message=self.error_messages['invalid_unicode'])
         else:
             validator = RegexValidator(re.compile(r'^[-a-zA-Z0-9_]+$'), message=self.error_messages['invalid'])
         self.validators.append(validator)
@@ -1043,7 +1049,7 @@ class DecimalField(Field):
         if rounding is not None:
             valid_roundings = [v for k, v in vars(decimal).items() if k.startswith('ROUND_')]
             assert rounding in valid_roundings, (
-                'Invalid rounding option %s. Valid values for rounding are: %s' % (rounding, valid_roundings))
+                    'Invalid rounding option %s. Valid values for rounding are: %s' % (rounding, valid_roundings))
         self.rounding = rounding
 
     def to_internal_value(self, data):
@@ -1782,6 +1788,7 @@ class JSONField(Field):
                     ret = str.__new__(cls, value)
                     ret.is_json_string = True
                     return ret
+
             return JSONString(dictionary[self.field_name])
         return dictionary.get(self.field_name, empty)
 
@@ -1835,6 +1842,7 @@ class HiddenField(Field):
     constraint on a pair of fields, as we need some way to include the date in
     the validated data.
     """
+
     def __init__(self, **kwargs):
         assert 'default' in kwargs, 'default is a required argument.'
         kwargs['write_only'] = True
@@ -1864,6 +1872,7 @@ class SerializerMethodField(Field):
         def get_extra_info(self, obj):
             return ...  # Calculate some data to return.
     """
+
     def __init__(self, method_name=None, **kwargs):
         self.method_name = method_name
         kwargs['source'] = '*'
