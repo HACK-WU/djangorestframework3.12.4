@@ -238,6 +238,12 @@ class BaseSerializer(Field):
         return self.instance
 
     def is_valid(self, raise_exception=False):
+        """
+        校验顺序: 字段本身类型校验(校验器是validators或者default_validators)->局部钩子函数校验->
+        序列化器中定义的validators(default_validators)校验->全局钩子函数校验
+        :param raise_exception:
+        :return: bool
+        """
         # initial_data 就是传入的data
         assert hasattr(self, 'initial_data'), (
             'Cannot call `.is_valid()` as no `data=` keyword argument was '
@@ -308,9 +314,8 @@ class BaseSerializer(Field):
 
 class SerializerMetaclass(type):
     """
-    这个元类在类上设置了一个名为`_declared_fields`的字典。
-
-    类或其任何超类中作为属性包含的`Field`实例都将包含在`_declared_fields`字典中。
+    收集所有字段。
+    收集当前类以及包含“_declared_fields”属性的所有父类的所有字段，并有序的封装在`_declared_fields`字典中。
     """
 
     @classmethod
@@ -321,7 +326,7 @@ class SerializerMetaclass(type):
         :return:
         """
 
-        # 从属性中提取字段，并按创建计数器排序
+        # 从属性中提取Field字段，并按创建计数器排序
         fields = [(field_name, attrs.pop(field_name))
                   for field_name, obj in list(attrs.items())
                   if isinstance(obj, Field)]
@@ -336,7 +341,7 @@ class SerializerMetaclass(type):
             known.add(name)
             return name
 
-        # 从基类中收集字段，确保不重复
+        # 从父类中收集字段，确保不重复
         base_fields = [
             (visit(name), f)
             for base in bases if hasattr(base, '_declared_fields')
@@ -350,7 +355,6 @@ class SerializerMetaclass(type):
         # 在创建新类时，设置_declared_fields属性
         attrs['_declared_fields'] = cls._get_declared_fields(bases, attrs)
         return super().__new__(cls, name, bases, attrs)
-
 
 
 def as_serializer_error(exc):
@@ -384,18 +388,18 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
         'invalid': _('Invalid data. Expected a dictionary, but got {datatype}.')
     }
 
-    @cached_property
+    @cached_property  # 使用缓存属性装饰器，使得该属性只计算一次，之后直接返回缓存的结果
     def fields(self):
         """
         A dictionary of {field_name: field_instance}.
+        每一个字段都是一个 Field实例
         """
-        # `fields` is evaluated lazily. We do this to ensure that we don't
-        # have issues importing modules that use ModelSerializers as fields,
-        # even if Django's app-loading stage has not yet run.
-        fields = BindingDict(self)
-        for key, value in self.get_fields().items():
-            fields[key] = value
-        return fields
+        # `fields` 是延迟计算的。我们这样做是为了确保我们在导入使用 ModelSerializers 作为字段的模块时不会遇到问题，
+        # 即使 Django 的应用加载阶段尚未运行。
+        fields = BindingDict(self)  # 创建一个绑定到当前实例的字典
+        for key, value in self.get_fields().items():  # 遍历通过 get_fields 方法获取的所有字段及其值
+            fields[key] = value  # 将字段添加到字典中
+        return fields  # 返回包含所有字段的字典
 
     @property
     def _writable_fields(self):
@@ -462,10 +466,13 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
         (is_empty_value, data) = self.validate_empty_values(data)
         if is_empty_value:
             return data
-
+        # 将外部值转为内部值，转换的过程中就已经对外部值进行了一次验证，这里的value是一个有序字典。
+        # 这里返回的数据仅仅是外部传入并转换后的值，还有一些其他的字段没有获取到，比如read_only字段的验证。
         value = self.to_internal_value(data)
         try:
+            # 通过字段指定的验证器对内部值进行验证
             self.run_validators(value)
+            # 调用全局钩子进行数据验证
             value = self.validate(value)
             assert value is not None, '.validate() should return the validated data'
         except (ValidationError, DjangoValidationError) as exc:
@@ -474,19 +481,26 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
         return value
 
     def _read_only_defaults(self):
+        # 遍历序列化器中的所有字段
         fields = [
             field for field in self.fields.values()
+            # 筛选出只读字段，且具有默认值，字段来源不是'*'，且字段来源不包含'.'
             if (field.read_only) and (field.default != empty) and (field.source != '*') and ('.' not in field.source)
         ]
 
+        # 创建一个有序字典来存储符合条件的字段的默认值
         defaults = OrderedDict()
         for field in fields:
             try:
+                # 尝试获取字段的默认值
                 default = field.get_default()
             except SkipField:
+                # 如果遇到SkipField异常，则跳过当前字段
                 continue
+            # 将字段的来源作为键，字段的默认值作为值，存入有序字典中
             defaults[field.source] = default
 
+        # 返回包含所有符合条件的字段默认值的有序字典
         return defaults
 
     def run_validators(self, value):
@@ -494,6 +508,7 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
         Add read_only fields with defaults to value before running validators.
         """
         if isinstance(value, dict):
+            # 获取到只读的字段，并更新到value中
             to_validate = self._read_only_defaults()
             to_validate.update(value)
         else:
@@ -503,10 +518,12 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
     def to_internal_value(self, data):
         """
         data就是initial_data
-        将外部数据转换为内部数据
-        此方法用于将接收到的数据（通常是来自请求的JSON或其他格式的数据）转换为Python对象.
-        Dict of native values <- Dict of primitive datatypes.
+        将外部数据转换为内部数据，在转换的过程中其实就是对数据进行格式校验。
+        先是对字段本身进行校验，然后再钩子函数(validate_filename)进行校验。
+        此方法用于将接收到的数据（通常是来自请求的JSON或其他格式的数据）转换为Python对象。
+        :returns :Dict
         """
+        # 检查传入的数据是否为字典类型，如果不是，则抛出ValidationError异常
         if not isinstance(data, Mapping):
             message = self.error_messages['invalid'].format(
                 datatype=type(data).__name__
@@ -515,29 +532,42 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
                 api_settings.NON_FIELD_ERRORS_KEY: [message]
             }, code='invalid')
 
+        # 初始化返回的内部数据和错误信息
         ret = OrderedDict()
         errors = OrderedDict()
+        # 获取可写的字段列表,fields是一个生成器，ready_only不等于true就是可写对象
         fields = self._writable_fields
 
+        # 遍历每个字段进行验证和转换
         for field in fields:
+            # 获取字段的验证方法，如果存在的话
             validate_method = getattr(self, 'validate_' + field.field_name, None)
+            # 获取字段在数据中的原始值
             primitive_value = field.get_value(data)
             try:
+                # 校验该字段的值，使用Filed字段中的run_validation方法进行验证
                 validated_value = field.run_validation(primitive_value)
+                # 使用钩子函数进行验证
                 if validate_method is not None:
                     validated_value = validate_method(validated_value)
             except ValidationError as exc:
+                # 如果验证失败，记录错误信息
                 errors[field.field_name] = exc.detail
             except DjangoValidationError as exc:
+                # 如果是Django特定的验证错误，也记录错误信息
                 errors[field.field_name] = get_error_detail(exc)
             except SkipField:
+                # 如果字段被跳过，则不做任何处理
                 pass
             else:
+                # 如果没有错误，将验证后的值设置到返回的内部数据中
                 set_value(ret, field.source_attrs, validated_value)
 
+        # 如果有错误信息，抛出ValidationError异常
         if errors:
             raise ValidationError(errors)
 
+        # 返回转换后的内部数据
         return ret
 
     def to_representation(self, instance):

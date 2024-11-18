@@ -326,6 +326,20 @@ class Field:
                  required=None, default=empty, initial=empty, source=None,
                  label=None, help_text=None, style=None,
                  error_messages=None, validators=None, allow_null=False):
+        """
+        :param read_only: 只读
+        :param write_only: 只写
+        :param required: 被需要
+        :param default: 默认值
+        :param initial:
+        :param source: 字段源
+        :param label:  标签
+        :param help_text: 帮助信息
+        :param style:
+        :param error_messages:  错误信息
+        :param validators:  验证器，这个验证仅仅只是验证，不会返回验证后的数据
+        :param allow_null: 允许为空
+        """
         self._creation_counter = Field._creation_counter
         Field._creation_counter += 1
 
@@ -374,9 +388,8 @@ class Field:
         Called when a field is added to the parent serializer instance.
         """
 
-        # In order to enforce a consistent style, we error if a redundant
-        # 'source' argument has been used. For example:
-        # my_field = serializer.CharField(source='my_field')
+        # 确保一致性风格，如果使用了多余的'source'参数，则报错。
+        # 例如：my_field = serializer.CharField(source='my_field')，这是多余的。
         assert self.source != field_name, (
                 "It is redundant to specify `source='%s'` on field '%s' in "
                 "serializer '%s', because it is the same as the field name. "
@@ -384,19 +397,21 @@ class Field:
                 (field_name, self.__class__.__name__, parent.__class__.__name__)
         )
 
+        # 设置字段名和父级序列化器实例
         self.field_name = field_name
         self.parent = parent
 
-        # `self.label` should default to being based on the field name.
+        # 如果没有设置label，则默认使用字段名，并将下划线替换为空格，首字母大写
         if self.label is None:
             self.label = field_name.replace('_', ' ').capitalize()
 
-        # self.source should default to being the same as the field name.
+        # 如果没有设置source，则默认使用字段名作为source
         if self.source is None:
             self.source = field_name
 
-        # self.source_attrs is a list of attributes that need to be looked up
-        # when serializing the instance, or populating the validated data.
+        # source_attrs是一个列表，包含了序列化实例或填充验证数据时需要查找的属性
+        # 如果source是'*'，则source_attrs为空列表，否则将source按'.'分割成属性列表
+        # 后续将initial_data转为内部值的时候，会根据source_attrs进行嵌套赋值。
         if self.source == '*':
             self.source_attrs = []
         else:
@@ -428,26 +443,31 @@ class Field:
 
     def get_value(self, dictionary):
         """
-        Given the *incoming* primitive data, return the value for this field
-        that should be validated and transformed to a native value.
+        给定传入的原始数据，返回该字段的值，该值应被验证并转换为本地值。
         """
+        # 检查输入数据是否来自HTML表单
         if html.is_html_input(dictionary):
-            # HTML forms will represent empty fields as '', and cannot
-            # represent None or False values directly.
+            # HTML表单将空字段表示为''，并且不能直接表示None或False值。
+            # 如果字段名不在字典中
             if self.field_name not in dictionary:
+                # 如果存在部分数据（partial），则返回空值
                 if getattr(self.root, 'partial', False):
                     return empty
+                # 否则返回默认的空HTML值
                 return self.default_empty_html
+            # 获取字段的值
             ret = dictionary[self.field_name]
+            # 如果字段值为空字符串，并且允许null值
             if ret == '' and self.allow_null:
-                # If the field is blank, and null is a valid value then
-                # determine if we should use null instead.
+                # 如果字段为空白，并且空白是有效值，则决定我们是否应该使用null代替。
                 return '' if getattr(self, 'allow_blank', False) else None
+            # 如果字段值为空字符串，并且字段不是必需的
             elif ret == '' and not self.required:
-                # If the field is blank, and emptiness is valid then
-                # determine if we should use emptiness instead.
+                # 如果字段为空白，并且空白是有效值，则决定我们是否应该使用空白代替。
                 return '' if getattr(self, 'allow_blank', False) else empty
+            # 返回字段的值
             return ret
+        # 如果不是HTML输入，则直接从字典中获取字段值，如果不存在则返回空值
         return dictionary.get(self.field_name, empty)
 
     def get_attribute(self, instance):
@@ -493,17 +513,18 @@ class Field:
 
     def get_default(self):
         """
-        Return the default value to use when validating data if no input
-        is provided for this field.
+        返回在验证数据时，如果没有为该字段提供输入，则使用的默认值。
 
-        If a default has not been set for this field then this will simply
-        raise `SkipField`, indicating that no value should be set in the
-        validated data for this field.
+        如果没有为这个字段设置默认值，或者这是一个部分更新，
+        那么这将引发`SkipField`，表示在验证后的数据中不应该为这个字段设置值。
         """
+        # 检查是否有默认值或者是否是部分更新
         if self.default is empty or getattr(self.root, 'partial', False):
-            # No default, or this is a partial update.
-            raise SkipField()
+            raise SkipField()  # 如果没有默认值或者是部分更新，则跳过该字段
+
+        # 如果默认值是可调用的（例如函数）
         if callable(self.default):
+            # 检查默认值是否有set_context方法，并给出弃用警告
             if hasattr(self.default, 'set_context'):
                 warnings.warn(
                     "Method `set_context` on defaults is deprecated and will "
@@ -512,14 +533,15 @@ class Field:
                     "context as an additional argument.",
                     RemovedInDRF313Warning, stacklevel=2
                 )
-                self.default.set_context(self)
+                self.default.set_context(self)  # 设置上下文（已弃用）
 
+            # 如果默认值需要上下文
             if getattr(self.default, 'requires_context', False):
-                return self.default(self)
+                return self.default(self)  # 调用默认值函数并传入当前实例作为上下文
             else:
-                return self.default()
+                return self.default()  # 否则直接调用默认值函数
 
-        return self.default
+        return self.default  # 如果默认值不是可调用的，直接返回默认值
 
     def validate_empty_values(self, data):
         """
@@ -567,7 +589,7 @@ class Field:
         # 如果数据是空的，则直接返回数据，不进行后续处理
         if is_empty_value:
             return data
-        # 将外部数据转换为内部值
+        # 将外部数据转换为内部值，转换过程就已经对字段进行了一次校验。
         value = self.to_internal_value(data)
         # 运行所有的验证器来确保数据的有效性
         self.run_validators(value)
@@ -576,8 +598,8 @@ class Field:
 
     def run_validators(self, value):
         """
-        Test the given value against all the validators on the field,
-        and either raise a `ValidationError` or simply return.
+        测试给定的值是否通过字段上的所有验证器，
+        如果不通过则抛出`ValidationError`，否则直接返回。
         """
         errors = []
         for validator in self.validators:
@@ -595,18 +617,15 @@ class Field:
                 if getattr(validator, 'requires_context', False):
                     validator(value, self)
                 else:
-                    validator(value)
-            except ValidationError as exc:
-                # If the validation error contains a mapping of fields to
-                # errors then simply raise it immediately rather than
-                # attempting to accumulate a list of errors.
-                if isinstance(exc.detail, dict):
-                    raise
-                errors.extend(exc.detail)
-            except DjangoValidationError as exc:
-                errors.extend(get_error_detail(exc))
-        if errors:
-            raise ValidationError(errors)
+                    validator(value)  # 否则直接调用验证器
+            except ValidationError as exc:  # 如果捕获到ValidationError异常
+                if isinstance(exc.detail, dict):  # 如果错误详情是字典类型
+                    raise  # 直接抛出异常
+                errors.extend(exc.detail)  # 否则将错误详情添加到错误列表
+            except DjangoValidationError as exc:  # 如果捕获到DjangoValidationError异常
+                errors.extend(get_error_detail(exc))  # 将错误详情添加到错误列表
+        if errors:  # 如果有错误
+            raise ValidationError(errors)  # 抛出包含所有错误的ValidationError异常
 
     def to_internal_value(self, data):
         """
