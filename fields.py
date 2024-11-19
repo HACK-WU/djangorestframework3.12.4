@@ -84,30 +84,28 @@ def is_simple_callable(obj):
 
 def get_attribute(instance, attrs):
     """
-    Similar to Python's built in `getattr(instance, attr)`,
-    but takes a list of nested attributes, instead of a single attribute.
+    类似于Python内置的`getattr(instance, attr)`，
+    但是接受一个嵌套属性列表，而不是单个属性。
 
-    Also accepts either attribute lookup on objects or dictionary lookups.
+    同时接受对象上的属性查找或字典查找。
     """
-    for attr in attrs:
+    for attr in attrs:  # 遍历属性列表
         try:
-            if isinstance(instance, Mapping):
-                instance = instance[attr]
-            else:
-                instance = getattr(instance, attr)
-        except ObjectDoesNotExist:
-            return None
-        if is_simple_callable(instance):
+            if isinstance(instance, Mapping):  # 如果实例是映射类型（如字典）
+                instance = instance[attr]  # 直接通过键获取值
+            else:  # 否则，假设实例是对象
+                instance = getattr(instance, attr)  # 使用getattr获取属性值
+        except ObjectDoesNotExist:  # 如果属性不存在
+            return None  # 返回None
+        if is_simple_callable(instance):  # 如果获取的实例是可调用的（如函数）
             try:
-                instance = instance()
-            except (AttributeError, KeyError) as exc:
-                # If we raised an Attribute or KeyError here it'd get treated
-                # as an omitted field in `Field.get_attribute()`. Instead we
-                # raise a ValueError to ensure the exception is not masked.
+                instance = instance()  # 调用该实例
+            except (AttributeError, KeyError) as exc:  # 如果调用过程中发生错误
+                # 抛出一个ValueError，以确保原始异常不被掩盖
                 raise ValueError(
                     'Exception raised in callable attribute "{}"; original exception was: {}'.format(attr, exc))
+    return instance  # 返回最终的属性值
 
-    return instance
 
 
 def set_value(dictionary, keys, value):
@@ -472,12 +470,13 @@ class Field:
 
     def get_attribute(self, instance):
         """
-        Given the *outgoing* object instance, return the primitive value
-        that should be used for this field.
+        给定对象实例，返回实例对应此字段的原始值。
         """
         try:
+            # 尝试获取实例上由self.source_attrs指定的属性值
             return get_attribute(instance, self.source_attrs)
         except BuiltinSignatureError as exc:
+            # 如果字段源映射到内置函数类型，则抛出异常
             msg = (
                 'Field source for `{serializer}.{field}` maps to a built-in '
                 'function type and is invalid. Define a property or method on '
@@ -488,14 +487,20 @@ class Field:
                     instance=instance.__class__.__name__,
                 )
             )
+            # 抛出异常，并附带自定义错误信息
             raise type(exc)(msg)
         except (KeyError, AttributeError) as exc:
+            # 如果发生键错误或属性错误
             if self.default is not empty:
+                # 如果有默认值，则返回默认值
                 return self.get_default()
             if self.allow_null:
+                # 如果允许为空，则返回None
                 return None
             if not self.required:
+                # 如果字段不是必需的，则跳过该字段
                 raise SkipField()
+            # 如果以上条件都不满足，抛出异常并附带详细错误信息
             msg = (
                 'Got {exc_type} when attempting to get a value for field '
                 '`{field}` on serializer `{serializer}`.\nThe serializer '
@@ -545,35 +550,40 @@ class Field:
 
     def validate_empty_values(self, data):
         """
-        Validate empty values, and either:
+        验证空值，并根据情况：
 
-        * Raise `ValidationError`, indicating invalid data.
-        * Raise `SkipField`, indicating that the field should be ignored.
-        * Return (True, data), indicating an empty value that should be
-          returned without any further validation being applied.
-        * Return (False, data), indicating a non-empty value, that should
-          have validation applied as normal.
+        * 抛出 `ValidationError`，表示数据无效。
+        * 抛出 `SkipField`，表示该字段应被忽略。
+        * 返回 (True, data)，表示空值应返回而不应用任何进一步的验证。
+        * 返回 (False, data)，表示非空值，应按正常应用验证。
         """
+        # 如果字段是只读的，返回默认值，并标记为无需进一步验证
         if self.read_only:
             return (True, self.get_default())
 
+        # 检查数据是否为空（使用一个假设的 `empty` 变量，这里需要用户定义什么是空）
         if data is empty:
+            # 如果当前上下文允许部分更新，则跳过该字段
             if getattr(self.root, 'partial', False):
                 raise SkipField()
+            # 如果字段是必需的，抛出 'required' 错误
             if self.required:
                 self.fail('required')
+            # 如果字段不是必需的，返回默认值，并标记为无需进一步验证
             return (True, self.get_default())
 
+        # 如果数据是 None
         if data is None:
+            # 如果字段不允许为空，抛出 'null' 错误
             if not self.allow_null:
                 self.fail('null')
-            # Nullable `source='*'` fields should not be skipped when its named
-            # field is given a null value. This is because `source='*'` means
-            # the field is passed the entire object, which is not null.
+            # 如果字段的 source 是 '*'，表示它接收整个对象，即使该字段的值为 None 也不应跳过
             elif self.source == '*':
                 return (False, None)
+            # 如果字段允许为空，返回 None，并标记为无需进一步验证
             return (True, None)
 
+        # 如果数据既不是空也不是 None，返回数据，并标记为需要进一步验证
         return (False, data)
 
     def run_validation(self, data=empty):

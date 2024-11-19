@@ -112,6 +112,7 @@ class BaseSerializer(Field):
         if data is not empty:
             self.initial_data = data
         # 设置partial属性，如果kwargs中有'partial'键，则为True，否则为False
+        # 如果想使用序列化器进行部分更新，则将partial属性设置为True
         self.partial = kwargs.pop('partial', False)
         # 设置_context属性，用于存储上下文信息，从kwargs中弹出'context'键的值，如果没有则为空字典
         self._context = kwargs.pop('context', {})
@@ -135,35 +136,39 @@ class BaseSerializer(Field):
     @classmethod
     def many_init(cls, *args, **kwargs):
         """
-        This method implements the creation of a `ListSerializer` parent
-        class when `many=True` is used. You can customize it if you need to
-        control which keyword arguments are passed to the parent, and
-        which are passed to the child.
+        这个方法实现了当使用`many=True`时创建一个`ListSerializer`父类的过程。
+        如果你需要控制哪些关键字参数传递给父类，哪些传递给子类，你可以自定义这个方法。
 
-        Note that we're over-cautious in passing most arguments to both parent
-        and child classes in order to try to cover the general case. If you're
-        overriding this method you'll probably want something much simpler, eg:
+        注意，我们在将大多数参数传递给父类和子类时非常谨慎，以尝试覆盖一般情况。
+        如果你重写这个方法，你可能需要一些更简单的逻辑，例如：
 
         @classmethod
         def many_init(cls, *args, **kwargs):
             kwargs['child'] = cls()
             return CustomListSerializer(*args, **kwargs)
         """
+        # 从kwargs中弹出'allow_empty'参数，如果没有提供则默认为None
         allow_empty = kwargs.pop('allow_empty', None)
+        # 使用剩余的kwargs创建子序列化器实例
         child_serializer = cls(*args, **kwargs)
+        # 初始化list_kwargs字典，设置'child'键为子序列化器实例
         list_kwargs = {
             'child': child_serializer,
         }
+        # 如果allow_empty参数不为None，则将其添加到list_kwargs中
         if allow_empty is not None:
             list_kwargs['allow_empty'] = allow_empty
+        # 更新list_kwargs字典，只保留那些在LIST_SERIALIZER_KWARGS中的键值对
         list_kwargs.update({
             key: value for key, value in kwargs.items()
             if key in LIST_SERIALIZER_KWARGS
         })
+        # 获取cls的Meta类，如果不存在则默认为None
         meta = getattr(cls, 'Meta', None)
+        # 从Meta类中获取list_serializer_class属性，如果不存在则默认为ListSerializer
         list_serializer_class = getattr(meta, 'list_serializer_class', ListSerializer)
+        # 使用list_kwargs作为参数创建并返回list_serializer_class的实例
         return list_serializer_class(*args, **list_kwargs)
-
     def to_internal_value(self, data):
         """
         将外部数据转换为内部数据
@@ -572,29 +577,28 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
 
     def to_representation(self, instance):
         """
-        Object instance -> Dict of primitive datatypes.
+        将对象实例转换为基本数据类型的字典。
+        这个instance可以是一个对象实例，也可以是一个字典,甚至可以是一个可调用的对象
+        获取所有可读的字段，循环获取到该字段在instance中的值.
         """
-        ret = OrderedDict()
-        fields = self._readable_fields
+        ret = OrderedDict()  # 创建一个有序字典来存储结果
+        fields = self._readable_fields  # 获取所有可读字段，是一个生成器
 
-        for field in fields:
+        for field in fields:  # 遍历每个字段
             try:
-                attribute = field.get_attribute(instance)
-            except SkipField:
+                attribute = field.get_attribute(instance)  # 尝试获取字段对应的属性值
+            except SkipField:  # 如果字段被跳过，则继续下一个字段
                 continue
 
-            # We skip `to_representation` for `None` values so that fields do
-            # not have to explicitly deal with that case.
-            #
-            # For related fields with `use_pk_only_optimization` we need to
-            # resolve the pk value.
+            # 对于None值，我们跳过to_representation调用，这样字段就不必显式处理这种情况。
+            # 对于使用了use_pk_only_optimization的相关字段，我们需要解析主键值。
             check_for_none = attribute.pk if isinstance(attribute, PKOnlyObject) else attribute
-            if check_for_none is None:
-                ret[field.field_name] = None
+            if check_for_none is None:  # 如果属性值为None
+                ret[field.field_name] = None  # 直接将字段名和None添加到结果字典中
             else:
-                ret[field.field_name] = field.to_representation(attribute)
+                ret[field.field_name] = field.to_representation(attribute)  # 否则调用字段的to_representation方法转换属性值
 
-        return ret
+        return ret  # 返回结果字典
 
     def validate(self, attrs):
         return attrs
